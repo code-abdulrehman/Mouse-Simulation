@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>User + Bot Mouse Simulation</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+<script src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+
+<style>
+body { margin:0; overflow:hidden; }
+</style>
+</head>
+<body class="bg-gray-100 h-screen relative">
+
+<!-- Controls -->
+<div class="absolute top-4 left-4 space-x-2">
+  <button id="recordBtn" class="bg-red-600 text-white px-4 py-2 rounded">Start Recording</button>
+  <button id="playBtn" class="bg-blue-600 text-white px-4 py-2 rounded">Play</button>
+  <button id="botBtn" class="bg-green-600 text-white px-4 py-2 rounded">Bot Auto</button>
+</div>
+
+<!-- Center Buttons -->
+<div class="h-full flex items-center justify-center space-x-10">
+  <button id="saveBtn" class="bg-indigo-600 text-white px-10 py-4 rounded-lg text-lg">Save</button>
+  <button id="cancelBtn" class="bg-gray-600 text-white px-10 py-4 rounded-lg text-lg">Cancel</button>
+</div>
+
+<!-- Modal for playback -->
+<div id="modal" class="fixed inset-0 bg-white hidden">
+  <iframe id="simFrame" class="w-full h-full"></iframe>
+</div>
+
+<script>
+let recording=false;
+let userEvents=[];
+let botEvents=[];
+let startTime=0;
+let clickCounter=0;
+
+// Toast helper
+function toast(msg){
+  Toastify({text:msg,duration:2000,gravity:"top",position:"right"}).showToast();
+}
+
+// User button clicks
+saveBtn.onclick = () => toast("Save Clicked");
+cancelBtn.onclick = () => toast("Cancel Clicked");
+
+// Toggle user recording
+recordBtn.onclick = () => {
+  recording = !recording;
+  if(recording){
+    userEvents = [];
+    clickCounter = 0;
+    startTime = Date.now();
+    recordBtn.innerText = "Stop Recording";
+    toast("User Recording Started");
+  } else {
+    recordBtn.innerText = "Start Recording";
+    localStorage.setItem("userRecording", JSON.stringify(userEvents));
+    toast("User Recording Stopped");
+  }
+};
+
+// Track user mouse
+document.addEventListener("mousemove", e => {
+  if(!recording) return;
+  userEvents.push({
+    type:"move",
+    source:"user",
+    x:e.clientX,
+    y:e.clientY,
+    time:Date.now()-startTime
+  });
+});
+
+// Track user clicks
+document.addEventListener("click", e => {
+  if(!recording) return;
+  if(!e.target.id) return;
+  clickCounter++;
+  userEvents.push({
+    type:"click",
+    source:"user",
+    number:clickCounter,
+    x:e.clientX,
+    y:e.clientY,
+    target:e.target.id,
+    time:Date.now()-startTime
+  });
+});
+
+// Bot auto recording
+botBtn.onclick = () => {
+  botEvents = [];
+  clickCounter = 0;
+
+  let saveRect = saveBtn.getBoundingClientRect();
+  let cancelRect = cancelBtn.getBoundingClientRect();
+
+  let botPath = [
+    {x:0, y:0},
+    {x: saveRect.left + saveRect.width/2, y: saveRect.top + saveRect.height/2},
+    {x: cancelRect.left + cancelRect.width/2, y: cancelRect.top + cancelRect.height/2}
+  ];
+
+  let time=0;
+  botPath.forEach((p,i)=>{
+    time += 800;
+    botEvents.push({type:"move",source:"bot",x:p.x,y:p.y,time:time});
+    if(i>0){
+      clickCounter++;
+      botEvents.push({type:"click",source:"bot",number:clickCounter,x:p.x,y:p.y,target:i===1?"saveBtn":"cancelBtn",time:time+200});
+      setTimeout(()=>{
+        document.getElementById(i===1?"saveBtn":"cancelBtn").click();
+      }, time+200);
+    }
+  });
+
+  localStorage.setItem("botRecording", JSON.stringify(botEvents));
+  toast("Bot Recording Done");
+};
+
+// Play simulation: combine user + bot
+playBtn.onclick = () => {
+  let userData = JSON.parse(localStorage.getItem("userRecording")||"[]");
+  let botData = JSON.parse(localStorage.getItem("botRecording")||"[]");
+  let allData = [...userData, ...botData];
+  if(!allData.length) return;
+
+  document.getElementById("modal").classList.remove("hidden");
+  let frame = document.getElementById("simFrame");
+
+  // Full-screen UI playback
+  frame.srcdoc = `
+  <html>
+  <head>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <style>
+    body{margin:0;overflow:hidden;background:#f3f4f6;}
+    canvas{position:absolute;top:0;left:0;pointer-events:none;}
+    #cursor{width:14px;height:14px;background:black;border-radius:50%;position:absolute;z-index:1000;}
+    button{position:absolute;}
+  </style>
+  </head>
+  <body>
+    <button id="saveBtn" class="bg-indigo-600 text-white px-10 py-4 rounded-lg text-lg" style="left:calc(50% - 160px); top:50%;">Save</button>
+    <button id="cancelBtn" class="bg-gray-600 text-white px-10 py-4 rounded-lg text-lg" style="left:calc(50% + 40px); top:50%;">Cancel</button>
+    <canvas id="c"></canvas>
+    <div id="cursor"></div>
+  </body>
+  </html>
+  `;
+
+  frame.onload = () => {
+    let doc = frame.contentDocument;
+    let canvas = doc.getElementById("c");
+    let ctx = canvas.getContext("2d");
+    let cursor = doc.getElementById("cursor");
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    allData.forEach((ev, i) => {
+      setTimeout(() => {
+
+        cursor.style.left = ev.x + "px";
+        cursor.style.top = ev.y + "px";
+
+        if(i>0){
+          let prev = allData[i-1];
+          if(prev && ev.type==="move"){
+            ctx.strokeStyle = ev.source==="user" ? "blue" : "green";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(ev.x, ev.y);
+            ctx.stroke();
+          }
+        }
+
+        if(ev.type==="click"){
+          ctx.fillStyle="red";
+          ctx.beginPath();
+          ctx.arc(ev.x, ev.y, 12, 0, Math.PI*2);
+          ctx.fill();
+          ctx.fillStyle="white";
+          ctx.font="12px Arial";
+          ctx.fillText(ev.number, ev.x-4, ev.y+4);
+        }
+
+      }, ev.time);
+    });
+  };
+};
+
+// Close modal
+modal.onclick = () => modal.classList.add("hidden");
+
+</script>
+</body>
+</html>
